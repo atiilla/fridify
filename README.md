@@ -117,3 +117,7 @@ API documentation is available at:
 ## License
 
 MIT 
+
+## Disclaimer
+
+This tool is provided for educational and research purposes only. The authors are not responsible for any misuse or damage caused by this tool. Always ensure you have proper authorization before testing or analyzing any application. Use of this tool against applications or systems without explicit permission from their owners may be illegal and is not recommended. 
