@@ -11,6 +11,9 @@ A comprehensive GUI and API for automating Frida-related tasks for Android appli
 - SSL pinning bypass capabilities
 - Simple script management
 
+## Demo
+![Demo](https://raw.githubusercontent.com/atiilla/fridify/main/demo.gif)
+
 ## Requirements
 
 - Python 3.8+
