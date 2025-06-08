@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frida Web Client</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding: 20px;
+        }
+        .container {
+            max-width: 960px;
+        }
+        .script-editor {
+            height: 300px;
+            font-family: monospace;
+        }
+        .console {
+            height: 300px;
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            padding: 10px;
+            font-family: monospace;
+            white-space: pre-wrap;
+            margin-bottom: 20px;
+        }
+        .console-line {
+            margin: 0;
+            padding: 2px 0;
+        }
+        .console-info {
+            color: #0d6efd;
+        }
+        .console-success {
+            color: #198754;
+        }
+        .console-error {
+            color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4">Frida Web Client</h1>
+        
+        <div class="row mb-3">
+            <div class="col">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        Connection
+                    </div>
+                    <div class="card-body">
+                        <div class="d-flex gap-2">
+                            <button id="connect-btn" class="btn btn-success">Connect to Frida</button>
+                            <button id="disconnect-btn" class="btn btn-danger" disabled>Disconnect</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row mb-3">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        Devices
+                    </div>
+                    <div class="card-body">
+                        <button id="refresh-devices-btn" class="btn btn-secondary mb-3" disabled>Refresh Devices</button>
+                        <select id="devices-select" class="form-select" disabled></select>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        Processes
+                    </div>
+                    <div class="card-body" id="processes-container">
+                        <button id="refresh-processes-btn" class="btn btn-secondary mb-3" disabled>Refresh Processes</button>
+                        <select id="processes-select" class="form-select" disabled></select>
+                        
+                        <div class="mt-3 d-flex gap-2">
+                            <button id="attach-btn" class="btn btn-primary" disabled>Attach to Process</button>
+                            <button id="spawn-btn" class="btn btn-success" disabled>Spawn & Bypass</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row mb-3">
+            <div class="col">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        Script
+                    </div>
+                    <div class="card-body">
+                        <textarea id="script-editor" class="form-control script-editor mb-3">(function() {
+  // Get process information first
+  var processInfo = {
+    id: Process.id,
+    arch: Process.arch,
+    platform: Process.platform,
+    pageSize: Process.pageSize,
+    pointerSize: Process.pointerSize
+  };
+  
+  send({type: 'message', text: '--- Process Information ---'});
+  send({type: 'message', text: `PID: ${processInfo.id}`});
+  send({type: 'message', text: `Architecture: ${processInfo.arch}`});
+  send({type: 'message', text: `Platform: ${processInfo.platform}`});
+  
+  // Handle different platforms/environments
+  var isAndroid = processInfo.platform === 'linux' && processInfo.arch.indexOf('arm') !== -1;
+  
+  // First try Java-based bypasses
+  var javaAvailable = false;
+  try {
+    javaAvailable = (typeof Java !== 'undefined');
+    if (javaAvailable) {
+      send({type: 'message', text: 'Java API is available - applying Java-based bypasses', important: true});
+      performJavaBypasses();
+    } else {
+      send({type: 'message', text: 'Java API is NOT available - skipping Java-based bypasses', important: true});
+    }
+  } catch (e) {
+    send({type: 'message', text: 'Error checking Java API: ' + e.message});
+  }
+  
+  // Always apply native SSL/TLS bypasses
+  send({type: 'message', text: 'Applying native SSL/TLS bypasses', important: true});
+  performNativeBypasses();
+  
+  // Implement Java-based bypasses (Android)
+  function performJavaBypasses() {
+    Java.perform(function() {
+      try {
+        // 1. Bypass built-in certificate validation
+        var X509TrustManager = Java.use('javax.net.ssl.X509TrustManager');
+        var SSLContext = Java.use('javax.net.ssl.SSLContext');
+        
+        // Create a TrustManager that trusts everything
+        var TrustManager = Java.registerClass({
+          name: 'com.frida.universal.TrustManager',
+          implements: [X509TrustManager],
+          methods: {
+            checkClientTrusted: function(chain, authType) {
+              send({type: 'message', text: 'checkClientTrusted called'});
+            },
+            checkServerTrusted: function(chain, authType) {
+              send({type: 'message', text: 'checkServerTrusted called - trusting any server cert'});
+            },
+            getAcceptedIssuers: function() { 
+              send({type: 'message', text: 'getAcceptedIssuers called - returning empty array'});
+              return []; 
+            }
+          }
+        });
+        
+        // Create a single instance of our TrustManager
+        var trustManagerInstance = TrustManager.$new();
+        
+        // Create array with our TrustManager
+        var TrustManagers = [trustManagerInstance];
+        
+        // 1.1 Try to intercept all uses of TrustManager on the default SSLContext
+        try {
+          var TrustManagerFactory = Java.use('javax.net.ssl.TrustManagerFactory');
+          var tmf_getInstance = TrustManagerFactory.getInstance.overload('java.lang.String');
+          tmf_getInstance.implementation = function(alg) {
+            send({type: 'message', text: `TrustManagerFactory.getInstance called with ${alg}`, important: true});
+            var retVal = tmf_getInstance.call(this, alg);
+            
+            // Inject our own trust managers
+            var getTrustManagers = retVal.getTrustManagers;
+            getTrustManagers.implementation = function() {
+              send({type: 'message', text: 'TrustManagerFactory.getTrustManagers intercepted', important: true});
+              return TrustManagers;
+            };
+            
+            return retVal;
+          };
+          send({type: 'message', text: 'TrustManagerFactory.getInstance hooked'});
+        } catch(e) {
+          send({type: 'message', text: 'Failed to hook TrustManagerFactory: ' + e});
+        }
+        
+        // 1.2 Override SSLContext.init
+        SSLContext.init.overload(
+          '[Ljavax.net.ssl.KeyManager;', 
+          '[Ljavax.net.ssl.TrustManager;', 
+          'java.security.SecureRandom'
+        ).implementation = function(keyManager, trustManager, secureRandom) {
+          send({type: 'message', text: 'SSLContext.init intercepted', important: true});
+          this.init(keyManager, TrustManagers, secureRandom);
+        };
+        
+        // 1.3 Try to replace the default SSLContext
+        try {
+          var SSLContext_Default = SSLContext.getDefault.overload();
+          SSLContext_Default.implementation = function() {
+            send({type: 'message', text: 'SSLContext.getDefault intercepted', important: true});
+            var sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(null, TrustManagers, null);
+            return sslContext;
+          };
+          send({type: 'message', text: 'SSLContext.getDefault hooked'});
+        } catch(e) {
+          send({type: 'message', text: 'Failed to hook SSLContext.getDefault: ' + e});
+        }
+        
+        // 2. Bypass certificate chain validation in HttpsURLConnection
+        try {
+          var HttpsURLConnection = Java.use("javax.net.ssl.HttpsURLConnection");
+          HttpsURLConnection.setDefaultHostnameVerifier.implementation = function(hostnameVerifier) {
+            send({type: 'message', text: 'HttpsURLConnection.setDefaultHostnameVerifier bypassed', important: true});
+            return; // Do nothing, don't set the hostname verifier
+          };
+          
+          HttpsURLConnection.setSSLSocketFactory.implementation = function(SSLSocketFactory) {
+            send({type: 'message', text: 'HttpsURLConnection.setSSLSocketFactory bypassed', important: true});
+            return; // Do nothing, use the default (now modified) factory
+          };
+          
+          HttpsURLConnection.setHostnameVerifier.implementation = function(hostnameVerifier) {
+            send({type: 'message', text: 'HttpsURLConnection.setHostnameVerifier bypassed for specific connection', important: true});
+            return; // Do nothing, don't set the verifier
+          };
+          send({type: 'message', text: 'HttpsURLConnection methods hooked'});
+        } catch(e) {
+          send({type: 'message', text: 'Failed to hook HttpsURLConnection: ' + e});
+        }
+        
+        // 3. Bypass OkHttp certificate pinning
+        try {
+          var OkHttpBuilder = Java.use('okhttp3.OkHttpClient$Builder');
+          OkHttpBuilder.certificatePinner.overload('okhttp3.CertificatePinner').implementation = function(certPinner) {
+            send({type: 'message', text: 'OkHttp certificatePinner bypassed', important: true});
+            return this;
+          };
+          
+          // Also try to bypass newer OkHttp versions if available
+          try {
+            var CertificatePinner = Java.use('okhttp3.CertificatePinner');
+            CertificatePinner.check.overload('java.lang.String', 'java.util.List').implementation = function(hostname, peerCertificates) {
+              send({type: 'message', text: `OkHttp certificate check bypassed for ${hostname}`, important: true});
+              return;
+            };
+            
+            // Also bypass OkHttp's internal certificate check
+            try {
+              var okhttp3_Activity = Java.use('okhttp3.internal.tls.OkHostnameVerifier');
+              okhttp3_Activity.verify.overload('java.lang.String', 'java.security.cert.X509Certificate').implementation = function(hostname, certificate) {
+                send({type: 'message', text: `OkHttp internal verify bypassed for ${hostname}`, important: true});
+                return true;
+              };
+              okhttp3_Activity.verify.overload('java.lang.String', 'javax.net.ssl.SSLSession').implementation = function(hostname, session) {
+                send({type: 'message', text: `OkHttp SSLSession verify bypassed for ${hostname}`, important: true});
+                return true;
+              };
+            } catch (e) {
+              send({type: 'message', text: 'OkHttp internal hostname verifier not found: ' + e.message});
+            }
+          } catch (e) {
+            send({type: 'message', text: 'OkHttp certificate pinner check method not found: ' + e.message});
+          }
+        } catch (e) {
+          send({type: 'message', text: 'OkHttp not found, skipping OkHttp-specific bypass: ' + e.message});
+        }
+        
+        // 4. Bypass Android WebView certificate errors
+        try {
+          var WebViewClient = Java.use('android.webkit.WebViewClient');
+          WebViewClient.onReceivedSslError.overload('android.webkit.WebView', 'android.webkit.SslErrorHandler', 'android.net.http.SslError').implementation = function(webView, handler, error) {
+            send({type: 'message', text: 'WebViewClient.onReceivedSslError bypassed', important: true});
+            handler.proceed();
+            return;
+          };
+        } catch (e) {
+          send({type: 'message', text: 'WebViewClient not found or already subclassed, skipping WebView bypass: ' + e.message});
+        }
+        
+        // 5. Add explicit proxy trust
+        try {
+          // Try to get system properties to check proxy settings
+          var SystemProperties = Java.use('android.os.SystemProperties');
+          var proxyHost = SystemProperties.get.overload('java.lang.String', 'java.lang.String').call(SystemProperties, "http.proxyHost", "");
+          var proxyPort = SystemProperties.get.overload('java.lang.String', 'java.lang.String').call(SystemProperties, "http.proxyPort", "");
+          
+          if (proxyHost.length > 0) {
+            send({type: 'message', text: `Detected proxy: ${proxyHost}:${proxyPort}`, important: true});
+          } else {
+            send({type: 'message', text: 'No system proxy detected. Make sure proxy is properly set up.'});
+            
+            // Try to force proxy settings
+            try {
+              // For emulators, default proxy is usually 10.0.2.2
+              var suggestedProxy = "10.0.2.2";
+              var suggestedPort = "8080";
+              
+              send({type: 'message', text: `Attempting to recommend proxy: ${suggestedProxy}:${suggestedPort}`, important: true});
+              
+              // Find a way to set the proxy programmatically (though this is difficult without root)
+              send({type: 'message', text: 'MANUAL SETUP REQUIRED: Configure proxy settings in Wi-Fi settings to point to your MITM proxy', important: true});
+            } catch (e) {
+              send({type: 'message', text: 'Failed to suggest proxy: ' + e.message});
+            }
+          }
+        } catch (e) {
+          send({type: 'message', text: 'Failed to check proxy settings: ' + e.message});
+        }
+        
+        send({type: 'message', text: 'Java-based SSL pinning bypasses and proxy trust ready', important: true});
+      } catch (e) {
+        send({type: 'error', message: 'Error in Java SSL pinning bypass: ' + e.message});
+      }
+    });
+  }
+  
+  // Implement native SSL/TLS bypasses
+  function performNativeBypasses() {
+    try {
+      // Monitor SSL/TLS functions
+      var sslFuncs = [
+        'SSL_CTX_set_custom_verify',
+        'SSL_CTX_set_verify',
+        'SSL_set_verify',
+        'SSL_get_verify_result',
+        'X509_verify_cert'
+      ];
+      
+      // Find and hook these functions
+      sslFuncs.forEach(function(funcName) {
+        try {
+          // Try to find the function without specifying a module
+          var address = Module.findExportByName(null, funcName);
+          if (address) {
+            send({type: 'message', text: `Found ${funcName} at ${address}`});
+            
+            // Try to hook it
+            try {
+              Interceptor.attach(address, {
+                onEnter: function(args) {
+                  send({type: 'message', text: `${funcName} called`});
+                  
+                  // For specific functions, store context
+                  if (funcName === 'SSL_get_verify_result') {
+                    this.shouldModifyReturn = true;
+                  }
+                  
+                  if (funcName === 'X509_verify_cert') {
+                    this.shouldForceSuccess = true;
+                  }
+                },
+                onLeave: function(retval) {
+                  // For SSL_get_verify_result, return X509_V_OK (0)
+                  if (this.shouldModifyReturn) {
+                    send({type: 'message', text: `Forcing ${funcName} to return X509_V_OK (0)`, important: true});
+                    return ptr(0);
+                  }
+                  
+                  // For X509_verify_cert, return success (1)
+                  if (this.shouldForceSuccess && !retval.equals(ptr(1))) {
+                    send({type: 'message', text: `Forcing ${funcName} to return success (1)`, important: true});
+                    return ptr(1);
+                  }
+                  
+                  return retval;
+                }
+              });
+              send({type: 'message', text: `Hooked ${funcName} successfully`});
+            } catch (hookError) {
+              send({type: 'message', text: `Could not hook ${funcName}: ${hookError.message}`});
+            }
+          }
+        } catch (findError) {
+          // Silently continue if we can't find a function
+        }
+      });
+      
+      // Try to find and hook OpenSSL/BoringSSL functions with different approach
+      try {
+        var libssl = Process.findModuleByName('libssl.so');
+        if (libssl) {
+          send({type: 'message', text: `Found libssl.so at ${libssl.base}`, important: true});
+          
+          // Try to find certificate verification functions by pattern
+          try {
+            var certVerifyPattern = 'verify'; // Simple pattern for demonstration
+            var symbols = libssl.enumerateSymbols();
+            if (symbols) {
+              var certFuncs = symbols.filter(function(sym) {
+                return sym.name.indexOf(certVerifyPattern) !== -1;
+              });
+              
+              send({type: 'message', text: `Found ${certFuncs.length} potential certificate verification functions`});
+              
+              // Hook a few key functions if found
+              certFuncs.slice(0, 3).forEach(function(sym) {
+                try {
+                  Interceptor.attach(sym.address, {
+                    onEnter: function(args) {
+                      send({type: 'message', text: `${sym.name} called`});
+                    },
+                    onLeave: function(retval) {
+                      // If function returns a verification result (assume non-zero is error)
+                      if (!retval.equals(ptr(0)) && !retval.equals(ptr(1))) {
+                        send({type: 'message', text: `${sym.name} forced to return success`, important: true});
+                        return ptr(1);  // Assume 1 is success
+                      }
+                      return retval;
+                    }
+                  });
+                  send({type: 'message', text: `Hooked ${sym.name}`});
+                } catch (e) {
+                  // Silently continue
+                }
+              });
+            }
+          } catch (e) {
+            send({type: 'message', text: `Error enumerating symbols: ${e.message}`});
+          }
+        }
+      } catch (e) {
+        send({type: 'message', text: `Error finding libssl.so: ${e.message}`});
+      }
+      
+      // Try to hook common network functions to monitor connections
+      try {
+        var connectAddr = Module.findExportByName(null, 'connect');
+        if (connectAddr) {
+          Interceptor.attach(connectAddr, {
+            onEnter: function(args) {
+              this.sockfd = args[0].toInt32();
+              // We don't need to modify anything, just monitor
+            },
+            onLeave: function(retval) {
+              send({type: 'message', text: `Network connection detected on socket ${this.sockfd}`});
+              return retval;
+            }
+          });
+          send({type: 'message', text: 'Monitoring network connections'});
+        }
+      } catch (e) {
+        // Silently continue
+      }
+      
+      send({type: 'message', text: 'Native SSL/TLS bypasses applied', important: true});
+    } catch (e) {
+      send({type: 'error', message: `Error in native SSL/TLS bypass: ${e ? e.message : 'unknown error'}`});
+    }
+  }
+  
+  // Set up ping handler for keeping script alive
+  recv('ping', function() {
+    send({type: 'pong', timestamp: new Date().toISOString()});
+  });
+  
+  send({type: 'message', text: 'SSL/TLS bypasses initialized successfully!', important: true});
+})();</textarea>
+                        <div class="d-flex gap-2">
+                            <button id="load-script-btn" class="btn btn-primary" disabled>Load Script</button>
+                            <button id="ping-btn" class="btn btn-secondary" disabled>Send Ping</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        Console
+                    </div>
+                    <div class="card-body">
+                        <div id="console" class="console"></div>
+                        <button id="clear-console-btn" class="btn btn-secondary">Clear Console</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html> 
